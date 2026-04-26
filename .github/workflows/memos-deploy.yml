@@ -6,7 +6,7 @@ on:
       download_url:
         description: '请输入 Memos 源码压缩包直链 (zip/tar.gz)'
         required: true
-        default: 'https://github.com/usememos/memos/archive/refs/tags/v0.27.1.zip'
+        default: 'https://github.com/usememos/memos/archive/refs/tags/v0.22.5.zip'
       memos_backend:
         description: '你的 Memos 后端地址 (必须包含 https://)'
         required: true
@@ -63,20 +63,20 @@ jobs:
         run: |
           DOMAIN=$(echo "${{ github.event.inputs.memos_backend }}" | sed 's:/*$::')
           
-          # Vercel 强正则规则，仅保留 api, memos.api.v1 和 file
+          # Vercel 路由规则：使用最基础的 (.*) 和 \$1 确保精确捕获并规避 Bash 变量冲突
           cat <<EOF > vercel.json
           {
             "version": 2,
             "rewrites": [
-              { "source": "/(?<route>api/.*)", "destination": "$DOMAIN/:route" },
-              { "source": "/(?<route>memos.api.v1..*)", "destination": "$DOMAIN/:route" },
-              { "source": "/(?<route>file/.*)", "destination": "$DOMAIN/:route" },
+              { "source": "/api/(.*)", "destination": "$DOMAIN/api/\$1" },
+              { "source": "/memos.api.v1.(.*)", "destination": "$DOMAIN/memos.api.v1.\$1" },
+              { "source": "/file/(.*)", "destination": "$DOMAIN/file/\$1" },
               { "source": "/(.*)", "destination": "/index.html" }
             ]
           }
           EOF
 
-          # Netlify 规则同步精简
+          # Netlify 规则精简同步
           cat <<EOF > netlify.toml
           [[redirects]]
             from = "/api/*"
