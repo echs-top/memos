@@ -1,4 +1,4 @@
-name: 部署 Memos 前端 (自动编译配置版)
+name: 部署 Memos 前端 (精确路由版)
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
       download_url:
         description: '请输入 Memos 源码压缩包直链 (zip/tar.gz)'
         required: true
-        default: 'https://github.com/usememos/memos/archive/refs/tags/v0.22.5.zip'
+        default: 'https://github.com/usememos/memos/archive/refs/tags/v0.27.1.zip'
       memos_backend:
         description: '你的 Memos 后端地址 (必须包含 https://)'
         required: true
@@ -33,7 +33,6 @@ jobs:
 
       - name: 清理当前目录
         run: |
-          # 仅保留关键的 Git 和 Action 目录，清理其余旧文件
           find . -maxdepth 1 ! -name '.github' ! -name '.git' ! -name '.gitignore' ! -name '.' -exec rm -rf {} +
 
       - name: 下载并解压源码
@@ -48,43 +47,36 @@ jobs:
 
       - name: 编译 Memos 前端
         run: |
-          # 自动寻找解压出来的根文件夹 (如 memos-0.22.5)
           ROOT_DIR=$(find . -maxdepth 1 -type d ! -name "." ! -name ".git" ! -name ".github" -print -quit)
           echo "进入源码目录: $ROOT_DIR/web"
           cd "$ROOT_DIR/web"
           
-          # 执行编译流程
           pnpm install
           pnpm build
           
-          # 将编译产物移动到仓库根目录
           mv dist/* ../../
           cd ../../
           
-          # 移除源码文件夹，保持仓库整洁
           rm -rf "$ROOT_DIR"
 
-      - name: 自动生成配置文件 (Vercel & Netlify)
+      - name: 生成精准路由配置 (Vercel & Netlify)
         run: |
-          # 格式化后端地址，去除末尾斜杠
           DOMAIN=$(echo "${{ github.event.inputs.memos_backend }}" | sed 's:/*$::')
           
-          # 生成 vercel.json (包含 SSE, API, gRPC 和文件代理)
+          # Vercel 强正则规则，仅保留 api, memos.api.v1 和 file
           cat <<EOF > vercel.json
           {
             "version": 2,
             "rewrites": [
-              { "source": "/api/:match*", "destination": "$DOMAIN/api/:match*" },
-              { "source": "/memos.api.v1.:match*", "destination": "$DOMAIN/memos.api.v1.:match*" },
-              { "source": "/file/:match*", "destination": "$DOMAIN/file/:match*" },
-              { "source": "/o/:match*", "destination": "$DOMAIN/o/:match*" },
-              { "source": "/u/:match*", "destination": "$DOMAIN/u/:match*" },
+              { "source": "/(?<route>api/.*)", "destination": "$DOMAIN/:route" },
+              { "source": "/(?<route>memos.api.v1..*)", "destination": "$DOMAIN/:route" },
+              { "source": "/(?<route>file/.*)", "destination": "$DOMAIN/:route" },
               { "source": "/(.*)", "destination": "/index.html" }
             ]
           }
           EOF
 
-          # 生成 netlify.toml
+          # Netlify 规则同步精简
           cat <<EOF > netlify.toml
           [[redirects]]
             from = "/api/*"
@@ -110,7 +102,7 @@ jobs:
             status = 200
           EOF
           
-          echo "配置文件已生成，后端 API 指向: $DOMAIN"
+          echo "精简版配置文件已生成，后端 API 指向: $DOMAIN"
 
       - name: 提交构建产物
         run: |
@@ -120,6 +112,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "没有内容变更，跳过提交。"
           else
-            git commit -m "chore: 自动编译 Memos 前端 (Backend: ${{ github.event.inputs.memos_backend }})"
+            git commit -m "chore: 编译 Memos 前端并更新精准路由 (Backend: ${{ github.event.inputs.memos_backend }})"
             git push
           fi
