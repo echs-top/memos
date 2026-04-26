@@ -1,9 +1,9 @@
 {
   "version": 2,
   "rewrites": [
-    { "source": "/(?<route>api/.*)", "destination": "https://memos.echs.top/:route" },
-    { "source": "/(?<route>memos.api.v1..*)", "destination": "https://memos.echs.top/:route" },
-    { "source": "/(?<route>file/.*)", "destination": "https://memos.echs.top/:route" },
+    { "source": "/api/(.*)", "destination": "https://memos.echs.top/api/$1" },
+    { "source": "/memos.api.v1.(.*)", "destination": "https://memos.echs.top/memos.api.v1.$1" },
+    { "source": "/file/(.*)", "destination": "https://memos.echs.top/file/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
