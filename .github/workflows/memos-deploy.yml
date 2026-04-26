@@ -1,0 +1,125 @@
+name: 部署 Memos 前端 (自动编译配置版)
+
+on:
+  workflow_dispatch:
+    inputs:
+      download_url:
+        description: '请输入 Memos 源码压缩包直链 (zip/tar.gz)'
+        required: true
+        default: 'https://github.com/usememos/memos/archive/refs/tags/v0.22.5.zip'
+      memos_backend:
+        description: '你的 Memos 后端地址 (必须包含 https://)'
+        required: true
+        default: 'https://demo.usememos.com'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出当前仓库
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: 清理当前目录
+        run: |
+          # 仅保留关键的 Git 和 Action 目录，清理其余旧文件
+          find . -maxdepth 1 ! -name '.github' ! -name '.git' ! -name '.gitignore' ! -name '.' -exec rm -rf {} +
+
+      - name: 下载并解压源码
+        run: |
+          curl -L -o memos_source.tmp "${{ github.event.inputs.download_url }}"
+          if [[ "${{ github.event.inputs.download_url }}" == *.tar.gz ]]; then
+            tar -xzf memos_source.tmp
+          else
+            unzip -o memos_source.tmp
+          fi
+          rm memos_source.tmp
+
+      - name: 编译 Memos 前端
+        run: |
+          # 自动寻找解压出来的根文件夹 (如 memos-0.22.5)
+          ROOT_DIR=$(find . -maxdepth 1 -type d ! -name "." ! -name ".git" ! -name ".github" -print -quit)
+          echo "进入源码目录: $ROOT_DIR/web"
+          cd "$ROOT_DIR/web"
+          
+          # 执行编译流程
+          pnpm install
+          pnpm build
+          
+          # 将编译产物移动到仓库根目录
+          mv dist/* ../../
+          cd ../../
+          
+          # 移除源码文件夹，保持仓库整洁
+          rm -rf "$ROOT_DIR"
+
+      - name: 自动生成配置文件 (Vercel & Netlify)
+        run: |
+          # 格式化后端地址，去除末尾斜杠
+          DOMAIN=$(echo "${{ github.event.inputs.memos_backend }}" | sed 's:/*$::')
+          
+          # 生成 vercel.json (包含 SSE, API, gRPC 和文件代理)
+          cat <<EOF > vercel.json
+          {
+            "version": 2,
+            "rewrites": [
+              { "source": "/api/:match*", "destination": "$DOMAIN/api/:match*" },
+              { "source": "/memos.api.v1.:match*", "destination": "$DOMAIN/memos.api.v1.:match*" },
+              { "source": "/file/:match*", "destination": "$DOMAIN/file/:match*" },
+              { "source": "/o/:match*", "destination": "$DOMAIN/o/:match*" },
+              { "source": "/u/:match*", "destination": "$DOMAIN/u/:match*" },
+              { "source": "/(.*)", "destination": "/index.html" }
+            ]
+          }
+          EOF
+
+          # 生成 netlify.toml
+          cat <<EOF > netlify.toml
+          [[redirects]]
+            from = "/api/*"
+            to = "$DOMAIN/api/:splat"
+            status = 200
+            force = true
+
+          [[redirects]]
+            from = "/memos.api.v1.*"
+            to = "$DOMAIN/memos.api.v1.:splat"
+            status = 200
+            force = true
+
+          [[redirects]]
+            from = "/file/*"
+            to = "$DOMAIN/file/:splat"
+            status = 200
+            force = true
+
+          [[redirects]]
+            from = "/*"
+            to = "/index.html"
+            status = 200
+          EOF
+          
+          echo "配置文件已生成，后端 API 指向: $DOMAIN"
+
+      - name: 提交构建产物
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .
+          if git diff --staged --quiet; then
+            echo "没有内容变更，跳过提交。"
+          else
+            git commit -m "chore: 自动编译 Memos 前端 (Backend: ${{ github.event.inputs.memos_backend }})"
+            git push
+          fi
