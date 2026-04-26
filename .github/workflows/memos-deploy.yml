@@ -6,7 +6,7 @@ on:
       download_url:
         description: '请输入 Memos 源码压缩包直链 (zip/tar.gz)'
         required: true
-        default: 'https://github.com/usememos/memos/archive/refs/tags/v0.22.5.zip'
+        default: 'https://github.com/usememos/memos/archive/refs/tags/v0.27.1.zip'
       memos_backend:
         description: '你的 Memos 后端地址 (必须包含 https://)'
         required: true
