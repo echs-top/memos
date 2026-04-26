@@ -1,11 +1,9 @@
 {
   "version": 2,
   "rewrites": [
-    { "source": "/api/:match*", "destination": "https://memos.echs.top/api/:match*" },
-    { "source": "/memos.api.v1.:match*", "destination": "https://memos.echs.top/memos.api.v1.:match*" },
-    { "source": "/file/:match*", "destination": "https://memos.echs.top/file/:match*" },
-    { "source": "/o/:match*", "destination": "https://memos.echs.top/o/:match*" },
-    { "source": "/u/:match*", "destination": "https://memos.echs.top/u/:match*" },
+    { "source": "/(?<route>api/.*)", "destination": "https://memos.echs.top/:route" },
+    { "source": "/(?<route>memos.api.v1..*)", "destination": "https://memos.echs.top/:route" },
+    { "source": "/(?<route>file/.*)", "destination": "https://memos.echs.top/:route" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
