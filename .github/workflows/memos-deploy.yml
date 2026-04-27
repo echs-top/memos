@@ -1,4 +1,4 @@
-name: 部署前端与编译无头后端 (全架构可选)
+name: 部署前端与编译无头后端 (修复文件夹残留版)
 
 on:
   workflow_dispatch:
@@ -21,8 +21,8 @@ on:
           - linux_arm64
           - linux_arm
           - windows_amd64
-          - darwin_amd64   # 新增：macOS Intel 芯片
-          - darwin_arm64   # 新增：macOS Apple M 系列芯片
+          - darwin_amd64
+          - darwin_arm64
 
 jobs:
   build-deploy-and-compile:
@@ -50,6 +50,7 @@ jobs:
 
       - name: 清理当前目录
         run: |
+          # 仅保留关键目录，确保环境纯净
           find . -maxdepth 1 ! -name '.github' ! -name '.git' ! -name '.gitignore' ! -name '.' -exec rm -rf {} +
 
       - name: 下载并解压源码
@@ -62,17 +63,42 @@ jobs:
           fi
           rm memos_source.tmp
 
-      - name: 编译 Memos 真实前端并提取
+      - name: 核心编译流程 (前端 + 后端)
         run: |
+          # 1. 定位源码根目录
           ROOT_DIR=$(find . -maxdepth 1 -type d ! -name "." ! -name ".git" ! -name ".github" -print -quit)
-          echo "ROOT_DIR=$ROOT_DIR" >> $GITHUB_ENV
           
+          # 2. 编译真实前端并提取到仓库根目录
           cd "$ROOT_DIR/web"
           pnpm install
           pnpm build
-          
           cp -r dist/* ../../
-          cd ../../
+          cd ../..
+          
+          # 3. 准备无头后端编译 (注入极简前端)
+          rm -rf "$ROOT_DIR/web/dist/"*
+          echo "<html><body>已关闭前端显示</body></html>" > "$ROOT_DIR/web/dist/index.html"
+          
+          # 4. 执行后端交叉编译
+          ARCH_SELECTION="${{ github.event.inputs.target_arch }}"
+          export GOOS=$(echo $ARCH_SELECTION | cut -d'_' -f1)
+          export GOARCH=$(echo $ARCH_SELECTION | cut -d'_' -f2)
+          [ "$GOARCH" == "arm" ] && export GOARM=7
+          export CGO_ENABLED=0
+          
+          OUTPUT_NAME="memos_headless"
+          [ "$GOOS" == "windows" ] && OUTPUT_NAME="memos_headless.exe"
+          
+          cd "$ROOT_DIR"
+          go build -ldflags="-s -w" -trimpath -o "../$OUTPUT_NAME" ./cmd/memos/main.go
+          cd ..
+          
+          # 5. 【关键】将后端文件移出仓库目录，防止被 Git 提交
+          mv "$OUTPUT_NAME" /tmp/memos_headless_bin
+          echo "FINAL_BIN_NAME=$OUTPUT_NAME" >> $GITHUB_ENV
+          
+          # 6. 【关键】彻底删除源码文件夹，确保它不会出现在 git add 中
+          rm -rf "$ROOT_DIR"
 
       - name: 生成精准路由配置 (Vercel & Netlify)
         run: |
@@ -117,52 +143,18 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add .
+          # 检查是否有文件变更，避免空提交报错
           if git diff --staged --quiet; then
             echo "没有内容变更，跳过提交。"
           else
-            git commit -m "chore: 更新前端静态资源与路由规则"
+            git commit -m "chore: 更新前端静态资源与路由规则 (Backend: ${{ github.event.inputs.memos_backend }})"
             git push
           fi
-
-      - name: 替换为极简前端并编译后端
-        run: |
-          cd "${{ env.ROOT_DIR }}"
-          
-          # 1. 注入极简前端
-          rm -rf web/dist/*
-          echo "<html><body>已关闭前端显示</body></html>" > web/dist/index.html
-          
-          # 2. 动态解析选择的架构
-          ARCH_SELECTION="${{ github.event.inputs.target_arch }}"
-          export GOOS=$(echo $ARCH_SELECTION | cut -d'_' -f1)
-          export GOARCH=$(echo $ARCH_SELECTION | cut -d'_' -f2)
-          
-          # 如果选了 arm (默认对应 32位 armv7)
-          if [ "$GOARCH" == "arm" ]; then
-            export GOARM=7
-          fi
-          
-          export CGO_ENABLED=0
-          
-          # 动态决定输出文件名 (如果是 Windows 加 .exe 后缀)
-          OUTPUT_NAME="memos_headless"
-          if [ "$GOOS" == "windows" ]; then
-            OUTPUT_NAME="memos_headless.exe"
-          fi
-          
-          # 3. 编译后端
-          go build -ldflags="-s -w" -trimpath -o "../$OUTPUT_NAME" ./cmd/memos/main.go
-          
-          cd ..
-          rm -rf "${{ env.ROOT_DIR }}"
-          
-          # 将文件名写入环境变量供最后一步上传使用
-          echo "OUTPUT_NAME=$OUTPUT_NAME" >> $GITHUB_ENV
 
       - name: 上传无头版后端原始文件
         uses: actions/upload-artifact@v4
         with:
-          # 下载包名称会带上你选的架构，例如: memos-headless-darwin_arm64
           name: memos-headless-${{ github.event.inputs.target_arch }}
-          path: ${{ env.OUTPUT_NAME }}
+          # 从临时目录读取文件
+          path: /tmp/memos_headless_bin
           retention-days: 7
