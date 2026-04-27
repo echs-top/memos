@@ -1,4 +1,4 @@
-name: 部署前端与编译无头后端 (稳定单架构版)
+name: 部署前端与编译无头后端 (全架构可选)
 
 on:
   workflow_dispatch:
@@ -11,6 +11,18 @@ on:
         description: '你的 Memos 后端地址 (必须包含 https://)'
         required: true
         default: 'https://demo.usememos.com'
+      target_arch:
+        description: '选择后端编译架构'
+        required: true
+        default: 'linux_amd64'
+        type: choice
+        options:
+          - linux_amd64
+          - linux_arm64
+          - linux_arm
+          - windows_amd64
+          - darwin_amd64   # 新增：macOS Intel 芯片
+          - darwin_arm64   # 新增：macOS Apple M 系列芯片
 
 jobs:
   build-deploy-and-compile:
@@ -120,23 +132,37 @@ jobs:
           rm -rf web/dist/*
           echo "<html><body>已关闭前端显示</body></html>" > web/dist/index.html
           
-          # 2. 编译 AMD64
-          export GOOS=linux
-          export GOARCH=amd64
+          # 2. 动态解析选择的架构
+          ARCH_SELECTION="${{ github.event.inputs.target_arch }}"
+          export GOOS=$(echo $ARCH_SELECTION | cut -d'_' -f1)
+          export GOARCH=$(echo $ARCH_SELECTION | cut -d'_' -f2)
+          
+          # 如果选了 arm (默认对应 32位 armv7)
+          if [ "$GOARCH" == "arm" ]; then
+            export GOARM=7
+          fi
+          
           export CGO_ENABLED=0
-          go build -ldflags="-s -w" -trimpath -o ../memos_headless ./cmd/memos/main.go
+          
+          # 动态决定输出文件名 (如果是 Windows 加 .exe 后缀)
+          OUTPUT_NAME="memos_headless"
+          if [ "$GOOS" == "windows" ]; then
+            OUTPUT_NAME="memos_headless.exe"
+          fi
+          
+          # 3. 编译后端
+          go build -ldflags="-s -w" -trimpath -o "../$OUTPUT_NAME" ./cmd/memos/main.go
           
           cd ..
-          
-          # 3. 打包成 tar.gz 并保留执行权限
-          chmod +x memos_headless
-          tar -czvf memos_linux_amd64.tar.gz memos_headless
-          
           rm -rf "${{ env.ROOT_DIR }}"
+          
+          # 将文件名写入环境变量供最后一步上传使用
+          echo "OUTPUT_NAME=$OUTPUT_NAME" >> $GITHUB_ENV
 
-      - name: 上传无头版后端 (AMD64)
+      - name: 上传无头版后端原始文件
         uses: actions/upload-artifact@v4
         with:
-          name: memos-headless-amd64
-          path: memos_linux_amd64.tar.gz
+          # 下载包名称会带上你选的架构，例如: memos-headless-darwin_arm64
+          name: memos-headless-${{ github.event.inputs.target_arch }}
+          path: ${{ env.OUTPUT_NAME }}
           retention-days: 7
