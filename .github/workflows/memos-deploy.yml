@@ -1,4 +1,4 @@
-name: 部署前端与编译无头后端 (二合一完整版)
+name: 部署前端与编译压缩版无头后端
 
 on:
   workflow_dispatch:
@@ -34,8 +34,10 @@ jobs:
       - name: 安装 Go 环境
         uses: actions/setup-go@v5
         with:
-          # 使用 stable 自动获取最新稳定版，满足新版 Memos 的编译要求
           go-version: 'stable'
+
+      - name: 安装 UPX 压缩工具
+        run: sudo apt-get install -y upx
 
       - name: 清理当前目录
         run: |
@@ -57,7 +59,6 @@ jobs:
           echo "ROOT_DIR=$ROOT_DIR" >> $GITHUB_ENV
           
           cd "$ROOT_DIR/web"
-          
           pnpm install
           pnpm build
           
@@ -86,19 +87,16 @@ jobs:
             to = "$DOMAIN/api/:splat"
             status = 200
             force = true
-
           [[redirects]]
             from = "/memos.api.v1.*"
             to = "$DOMAIN/memos.api.v1.:splat"
             status = 200
             force = true
-
           [[redirects]]
             from = "/file/*"
             to = "$DOMAIN/file/:splat"
             status = 200
             force = true
-
           [[redirects]]
             from = "/*"
             to = "/index.html"
@@ -113,40 +111,38 @@ jobs:
           if git diff --staged --quiet; then
             echo "没有内容变更，跳过提交。"
           else
-            git commit -m "chore: 编译 Memos 前端并更新精准路由 (Backend: ${{ github.event.inputs.memos_backend }})"
+            git commit -m "chore: 更新前端静态资源与路由规则"
             git push
           fi
 
-      - name: 替换为极简前端并编译 Go 无头后端
+      - name: 替换为极简前端并编译 & 压缩后端
         run: |
           cd "${{ env.ROOT_DIR }}"
           
+          # 1. 注入极简前端
           rm -rf web/dist/*
-          cat <<EOF > web/dist/index.html
-          <!DOCTYPE html>
-          <html lang="zh">
-          <head>
-              <meta charset="UTF-8">
-              <title>Memos API</title>
-          </head>
-          <body>
-              已关闭前端显示
-          </body>
-          </html>
-          EOF
+          echo "<html><body>已关闭前端显示</body></html>" > web/dist/index.html
           
+          # 2. 编译后端
           export GOOS=linux
           export GOARCH=amd64
           export CGO_ENABLED=0
-          # 注意这里：编译入口修正为最新源码目录下的 ./cmd/memos/main.go
-          go build -trimpath -o ../memos_headless ./cmd/memos/main.go
+          go build -ldflags="-s -w" -trimpath -o ../memos_headless ./cmd/memos/main.go
           
           cd ..
+          
+          # 3. 使用 UPX 进行高强度压缩 (ldflags 中的 -s -w 已经去掉了调试符号，upx 效果更佳)
+          upx --best --lzma memos_headless
+          
+          # 4. 打包成 tar.gz 并保留执行权限
+          chmod +x memos_headless
+          tar -czvf memos_headless_linux_amd64.tar.gz memos_headless
+          
           rm -rf "${{ env.ROOT_DIR }}"
 
-      - name: 上传无头版后端供下载
+      - name: 上传压缩版后端
         uses: actions/upload-artifact@v4
         with:
-          name: memos-headless-linux-amd64
-          path: memos_headless
+          name: memos-headless-bundle
+          path: memos_headless_linux_amd64.tar.gz
           retention-days: 7
