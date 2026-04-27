@@ -1,4 +1,4 @@
-name: 部署前端与编译无头后端 (修复文件夹残留版)
+name: 部署前端与编译无头后端
 
 on:
   workflow_dispatch:
