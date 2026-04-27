@@ -3,19 +3,16 @@
   to = "https://memos.echs.top/api/:splat"
   status = 200
   force = true
-
 [[redirects]]
   from = "/memos.api.v1.*"
   to = "https://memos.echs.top/memos.api.v1.:splat"
   status = 200
   force = true
-
 [[redirects]]
   from = "/file/*"
   to = "https://memos.echs.top/file/:splat"
   status = 200
   force = true
-
 [[redirects]]
   from = "/*"
   to = "/index.html"
