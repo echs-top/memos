@@ -6,7 +6,7 @@ on:
       download_url:
         description: '请输入 Memos 源码压缩包直链 (zip/tar.gz)'
         required: true
-        default: 'https://github.com/usememos/memos/archive/refs/tags/v0.27.1.zip'
+        default: 'https://github.com/usememos/memos/archive/refs/tags/v0.28.0.zip'
       memos_backend:
         description: '你的 Memos 后端地址 (必须包含 https://)'
         required: true
@@ -34,7 +34,8 @@ jobs:
       - name: 安装 Go 环境
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          # 使用 stable 自动获取最新稳定版，满足新版 Memos 的编译要求
+          go-version: 'stable'
 
       - name: 清理当前目录
         run: |
@@ -137,7 +138,8 @@ jobs:
           export GOOS=linux
           export GOARCH=amd64
           export CGO_ENABLED=0
-          go build -trimpath -o ../memos_headless ./bin/memos/main.go
+          # 注意这里：编译入口修正为最新源码目录下的 ./cmd/memos/main.go
+          go build -trimpath -o ../memos_headless ./cmd/memos/main.go
           
           cd ..
           rm -rf "${{ env.ROOT_DIR }}"
