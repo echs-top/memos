@@ -1,4 +1,4 @@
-name: 部署 Memos 前端 (精确路由版)
+name: 部署前端与编译无头后端 (二合一完整版)
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ on:
         default: 'https://demo.usememos.com'
 
 jobs:
-  build-and-deploy:
+  build-deploy-and-compile:
     runs-on: ubuntu-latest
     steps:
       - name: 检出当前仓库
@@ -31,6 +31,11 @@ jobs:
         with:
           version: 9
 
+      - name: 安装 Go 环境
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
       - name: 清理当前目录
         run: |
           find . -maxdepth 1 ! -name '.github' ! -name '.git' ! -name '.gitignore' ! -name '.' -exec rm -rf {} +
@@ -45,25 +50,23 @@ jobs:
           fi
           rm memos_source.tmp
 
-      - name: 编译 Memos 前端
+      - name: 编译 Memos 真实前端并提取
         run: |
           ROOT_DIR=$(find . -maxdepth 1 -type d ! -name "." ! -name ".git" ! -name ".github" -print -quit)
-          echo "进入源码目录: $ROOT_DIR/web"
+          echo "ROOT_DIR=$ROOT_DIR" >> $GITHUB_ENV
+          
           cd "$ROOT_DIR/web"
           
           pnpm install
           pnpm build
           
-          mv dist/* ../../
+          cp -r dist/* ../../
           cd ../../
-          
-          rm -rf "$ROOT_DIR"
 
       - name: 生成精准路由配置 (Vercel & Netlify)
         run: |
           DOMAIN=$(echo "${{ github.event.inputs.memos_backend }}" | sed 's:/*$::')
           
-          # Vercel 路由规则：使用最基础的 (.*) 和 \$1 确保精确捕获并规避 Bash 变量冲突
           cat <<EOF > vercel.json
           {
             "version": 2,
@@ -76,7 +79,6 @@ jobs:
           }
           EOF
 
-          # Netlify 规则精简同步
           cat <<EOF > netlify.toml
           [[redirects]]
             from = "/api/*"
@@ -101,10 +103,8 @@ jobs:
             to = "/index.html"
             status = 200
           EOF
-          
-          echo "精简版配置文件已生成，后端 API 指向: $DOMAIN"
 
-      - name: 提交构建产物
+      - name: 提交前端构建产物至仓库
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
@@ -115,3 +115,36 @@ jobs:
             git commit -m "chore: 编译 Memos 前端并更新精准路由 (Backend: ${{ github.event.inputs.memos_backend }})"
             git push
           fi
+
+      - name: 替换为极简前端并编译 Go 无头后端
+        run: |
+          cd "${{ env.ROOT_DIR }}"
+          
+          rm -rf web/dist/*
+          cat <<EOF > web/dist/index.html
+          <!DOCTYPE html>
+          <html lang="zh">
+          <head>
+              <meta charset="UTF-8">
+              <title>Memos API</title>
+          </head>
+          <body>
+              已关闭前端显示
+          </body>
+          </html>
+          EOF
+          
+          export GOOS=linux
+          export GOARCH=amd64
+          export CGO_ENABLED=0
+          go build -trimpath -o ../memos_headless ./bin/memos/main.go
+          
+          cd ..
+          rm -rf "${{ env.ROOT_DIR }}"
+
+      - name: 上传无头版后端供下载
+        uses: actions/upload-artifact@v4
+        with:
+          name: memos-headless-linux-amd64
+          path: memos_headless
+          retention-days: 7
