@@ -5,6 +5,7 @@ export default {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "*",
       "Access-Control-Allow-Headers": "*",
+      Content-Security-Policy = "frame-ancestors *",
     };
     // OPTIONS预检请求
     if (request.method === "OPTIONS") {
@@ -14,9 +15,6 @@ export default {
       // From global binding assets
       const response = await env.ASSETS.fetch(request);
 
-      if (response.status === 404) {
-        return new Response("File not found", { status: 404 });
-      }
       const newResponse = new Response(response.body, response);
       Object.keys(corsHeaders).forEach(key => {
         newResponse.headers.set(key, corsHeaders[key]);
