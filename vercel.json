@@ -1,7 +1,0 @@
-{
-  "version": 2,
-  "rewrites": [
-    { "source": "/file/(.*)", "destination": "https://notes.echs.top/file/$1" },
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
-}
