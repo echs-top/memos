@@ -25,10 +25,10 @@ jobs:
         with:
           version: 10
 
-      - name: 清理当前目录
+      - name: 清理当前目录 (只保留 .github)
         run: |
-          # 确保发布环境纯净
-          find . -maxdepth 1 ! -name '.github' ! -name '.git' ! -name '.gitignore' ! -name '.' -exec rm -rf {} +
+          # 彻底清空工作区旧文件，严格只保留 .github 和 .git 核心目录
+          find . -maxdepth 1 ! -name '.github' ! -name '.git' ! -name '.' -exec rm -rf {} +
 
       - name: 下载并解压 Memos 源码
         run: |
@@ -47,7 +47,7 @@ jobs:
           
           cd "$ROOT_DIR/web"
           
-          # 2. 使用 pnpm 10 安装依赖 (会自动向下兼容并处理旧版锁文件)
+          # 2. 使用 pnpm 10 安装依赖
           pnpm install
           
           # 3. 执行生产环境打包
@@ -57,7 +57,7 @@ jobs:
           cp -r dist/* ../../
           cd ../..
           
-          # 5. 彻底删除源码文件夹，不留痕迹
+          # 5. 彻底删除源码文件夹与 node_modules，不留任何缓存痕迹
           rm -rf "$ROOT_DIR"
 
       - name: 生成前端单页路由配置 (SPA 兼容)
@@ -85,22 +85,18 @@ jobs:
                 return new Response(null, { headers: corsHeaders });
               }
               try {
-                // 2. 从全局绑定的静态资源中获取文件
+                // From global binding assets
                 const response = await env.ASSETS.fetch(request);
           
-                // 文件不存在返回404
                 if (response.status === 404) {
                   return new Response("File not found", { status: 404 });
                 }
-                // 重写Response
                 const newResponse = new Response(response.body, response);
-                // 设置跨域头
                 Object.keys(corsHeaders).forEach(key => {
                   newResponse.headers.set(key, corsHeaders[key]);
                 });
                 return newResponse;
               } catch (e) {
-                // 错误处理
                 return new Response("Internal Server Error", { status: 500 });
               }
             }
@@ -123,6 +119,8 @@ jobs:
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
+          
+          # 此时暂存区会自动识别被删除的旧文件与新生成的文件
           git add .
           
           # 检查是否有文件变更，避免空提交导致 Action 报错
