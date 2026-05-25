@@ -86,21 +86,13 @@ jobs:
 
       - name: 生成前端单页路由配置 (SPA 兼容)
         run: |
-          # 静态 CDN 托管必留：防止前端路由刷新时报 404
-          cat <<EOF > vercel.json
-          {
-            "version": 2,
-            "rewrites": [
-              { "source": "/(.*)", "destination": "/index.html" }
-            ]
-          }
-          EOF
-
           cat <<EOF > netlify.toml
-          [[redirects]]
-            from = "/*"
-            to = "/index.html"
-            status = 200
+          [[headers]]
+            for = "/*"
+          [headers.values]
+            Access-Control-Allow-Origin = "*"
+            Access-Control-Allow-Methods = "*"
+            Access-Control-Allow-Headers = "*"
           EOF
 
       - name: 提交前端构建产物至仓库
