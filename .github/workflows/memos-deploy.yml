@@ -70,6 +70,54 @@ jobs:
               Access-Control-Allow-Methods = "*"
               Access-Control-Allow-Headers = "*"
           EOF
+          
+          cat <<EOF > worker.js
+          export default {
+            async fetch(request, env, ctx) {
+              // 跨域
+              const corsHeaders = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+              };
+              // OPTIONS预检请求
+              if (request.method === "OPTIONS") {
+                return new Response(null, { headers: corsHeaders });
+              }
+              try {
+                // 2. 从全局绑定的静态资源中获取文件
+                const response = await env.ASSETS.fetch(request);
+          
+                // 文件不存在返回404
+                if (response.status === 404) {
+                  return new Response("File not found", { status: 404 });
+                }
+                // 重写Response
+                const newResponse = new Response(response.body, response);
+                // 设置跨域头
+                Object.keys(corsHeaders).forEach(key => {
+                  newResponse.headers.set(key, corsHeaders[key]);
+                });
+                return newResponse;
+              } catch (e) {
+                // 错误处理
+                return new Response("Internal Server Error", { status: 500 });
+              }
+            }
+          };
+          EOF
+          
+          cat <<EOF > wrangler.toml
+          # Worker名称
+          name = "memos"
+          # 入口文件路径
+          main = "worker.js"
+          # 日期
+          compatibility_date = "2026-05-20"
+          # 配置静态资源目录
+          [assets]
+          directory = "./"
+          EOF
 
       - name: 提交前端构建产物至仓库
         run: |
