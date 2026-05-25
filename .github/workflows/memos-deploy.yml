@@ -1,4 +1,4 @@
-name: 部署纯前端静态资源 (CDN)
+name: 部署纯前端静态资源 (Node 22 & pnpm 10)
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
       download_url:
         description: '请输入 Memos 源码压缩包直链 (zip/tar.gz)'
         required: true
-        default: 'https://github.com/usememos/memos/archive/refs/tags/v0.28.0.zip'
+        default: 'https://github.com/usememos/memos/archive/refs/tags/v0.28.0.tar.gz'
 
 jobs:
   build-and-deploy:
@@ -14,32 +14,20 @@ jobs:
     steps:
       - name: 检出当前仓库
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 获取 Bun 最新版本号
-        id: bun-version
-        run: |
-          # 从 GitHub API 获取 Bun 的最新 Tag（例如 v1.1.0）
-          BUN_TAG=$(curl -s https://api.github.com/repos/oven-sh/bun/releases/latest | jq -r .tag_name)
-          echo "最新 Bun 版本: $BUN_TAG"
-          echo "version=$BUN_TAG" >> "$GITHUB_OUTPUT"
-
-      - name: 配置 Bun 编译器与依赖全局缓存
-        uses: actions/cache@v4
-        id: bun-cache
+      - name: 安装 Node.js 22 环境
+        uses: actions/setup-node@v4
         with:
-          path: |
-            ~/.bun-bin
-            ~/.bun/install/cache
-          # 用 Bun 的版本号作为 Key，一旦 Bun 官方发新版，Key 改变就会自动触发更新下载
-          key: ${{ runner.os }}-bun-${{ steps.bun-version.outputs.version }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
+          node-version: 22
+
+      - name: 安装 pnpm 10 环境
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
       - name: 清理当前目录
         run: |
-          # 仅保留 Git 必要目录，确保构建发布环境绝对纯净
+          # 确保发布环境纯净
           find . -maxdepth 1 ! -name '.github' ! -name '.git' ! -name '.gitignore' ! -name '.' -exec rm -rf {} +
 
       - name: 下载并解压 Memos 源码
@@ -52,36 +40,24 @@ jobs:
           fi
           rm memos_source.tmp
 
-      - name: 核心编译流程 (前端静态化)
+      - name: 核心编译流程 (现代前端构建)
         run: |
           # 1. 定位源码根目录
           ROOT_DIR=$(find . -maxdepth 1 -type d ! -name "." ! -name ".git" ! -name ".github" -print -quit)
           
-          # 2. 检查缓存中是否存在 Bun，不存在（或有更新）则下载
-          mkdir -p ~/.bun-bin
-          if [ ! -f ~/.bun-bin/bun ]; then
-            echo "未命中缓存或 Bun 有新版本，开始下载..."
-            curl -L -o bun.zip "https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip"
-            unzip bun.zip
-            mv bun-linux-x64/bun ~/.bun-bin/
-            rm -rf bun.zip bun-linux-x64
-            chmod +x ~/.bun-bin/bun
-          else
-            echo "命中 Bun 编译器缓存，跳过下载。"
-          fi
-          
-          # 3. 将 Bun 复制到 web 目录下（完全符合你原本的构建脚本路径）
-          cp ~/.bun-bin/bun "$ROOT_DIR/web/"
-          
-          # 4. 使用本地 Bun 编译真实前端并提取到仓库根目录
           cd "$ROOT_DIR/web"
-          chmod +x bun
-          ./bun install
-          ./bun run build
+          
+          # 2. 使用 pnpm 10 安装依赖 (会自动向下兼容并处理旧版锁文件)
+          pnpm install
+          
+          # 3. 执行生产环境打包
+          pnpm build
+          
+          # 4. 提取静态资源到仓库根目录
           cp -r dist/* ../../
           cd ../..
           
-          # 5. 彻底删除源码文件夹
+          # 5. 彻底删除源码文件夹，不留痕迹
           rm -rf "$ROOT_DIR"
 
       - name: 生成前端单页路由配置 (SPA 兼容)
@@ -89,10 +65,10 @@ jobs:
           cat <<EOF > netlify.toml
           [[headers]]
             for = "/*"
-          [headers.values]
-            Access-Control-Allow-Origin = "*"
-            Access-Control-Allow-Methods = "*"
-            Access-Control-Allow-Headers = "*"
+            [headers.values]
+              Access-Control-Allow-Origin = "*"
+              Access-Control-Allow-Methods = "*"
+              Access-Control-Allow-Headers = "*"
           EOF
 
       - name: 提交前端构建产物至仓库
@@ -101,10 +77,10 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add .
           
-          # 检查是否有文件变更，避免空提交报错
+          # 检查是否有文件变更，避免空提交导致 Action 报错
           if git diff --staged --quiet; then
             echo "没有内容变更，跳过提交。"
           else
-            git commit -m "chore: 自动化构建纯前端静态资源 (CDN)"
+            git commit -m "chore: 自动化构建纯前端静态资源 (Node 22 + pnpm 10)"
             git push
           fi
