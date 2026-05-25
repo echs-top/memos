@@ -1,4 +1,4 @@
-name: 部署前端与编译无头后端
+name: 部署纯前端静态资源 (CDN)
 
 on:
   workflow_dispatch:
@@ -7,25 +7,9 @@ on:
         description: '请输入 Memos 源码压缩包直链 (zip/tar.gz)'
         required: true
         default: 'https://github.com/usememos/memos/archive/refs/tags/v0.28.0.zip'
-      memos_backend:
-        description: '你的 Memos 后端地址 (必须包含 https://)'
-        required: true
-        default: 'https://demo.usememos.com'
-      target_arch:
-        description: '选择后端编译架构'
-        required: true
-        default: 'linux_amd64'
-        type: choice
-        options:
-          - linux_amd64
-          - linux_arm64
-          - linux_arm
-          - windows_amd64
-          - darwin_amd64
-          - darwin_arm64
 
 jobs:
-  build-deploy-and-compile:
+  build-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - name: 检出当前仓库
@@ -33,17 +17,32 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 安装 Go 环境
-        uses: actions/setup-go@v5
+      - name: 获取 Bun 最新版本号
+        id: bun-version
+        run: |
+          # 从 GitHub API 获取 Bun 的最新 Tag（例如 v1.1.0）
+          BUN_TAG=$(curl -s https://api.github.com/repos/oven-sh/bun/releases/latest | jq -r .tag_name)
+          echo "最新 Bun 版本: $BUN_TAG"
+          echo "version=$BUN_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: 配置 Bun 编译器与依赖全局缓存
+        uses: actions/cache@v4
+        id: bun-cache
         with:
-          go-version: 'stable'
+          path: |
+            ~/.bun-bin
+            ~/.bun/install/cache
+          # 用 Bun 的版本号作为 Key，一旦 Bun 官方发新版，Key 改变就会自动触发更新下载
+          key: ${{ runner.os }}-bun-${{ steps.bun-version.outputs.version }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
 
       - name: 清理当前目录
         run: |
-          # 仅保留关键目录，确保环境纯净
+          # 仅保留 Git 必要目录，确保构建发布环境绝对纯净
           find . -maxdepth 1 ! -name '.github' ! -name '.git' ! -name '.gitignore' ! -name '.' -exec rm -rf {} +
 
-      - name: 下载并解压源码
+      - name: 下载并解压 Memos 源码
         run: |
           curl -L -o memos_source.tmp "${{ github.event.inputs.download_url }}"
           if [[ "${{ github.event.inputs.download_url }}" == *.tar.gz ]]; then
@@ -53,20 +52,26 @@ jobs:
           fi
           rm memos_source.tmp
 
-      - name: 核心编译流程 (前端 + 后端)
+      - name: 核心编译流程 (前端静态化)
         run: |
           # 1. 定位源码根目录
           ROOT_DIR=$(find . -maxdepth 1 -type d ! -name "." ! -name ".git" ! -name ".github" -print -quit)
           
-          # 2. 下载并解压 Bun，将其放置到 web 目录下
-          curl -L -o bun.zip "https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip"
-          unzip bun.zip
-          mv bun-linux-x64/bun "$ROOT_DIR/web/"
-          rm -rf bun.zip bun-linux-x64
+          # 2. 检查缓存中是否存在 Bun，不存在（或有更新）则下载
+          mkdir -p ~/.bun-bin
+          if [ ! -f ~/.bun-bin/bun ]; then
+            echo "未命中缓存或 Bun 有新版本，开始下载..."
+            curl -L -o bun.zip "https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip"
+            unzip bun.zip
+            mv bun-linux-x64/bun ~/.bun-bin/
+            rm -rf bun.zip bun-linux-x64
+            chmod +x ~/.bun-bin/bun
+          else
+            echo "命中 Bun 编译器缓存，跳过下载。"
+          fi
           
-          # 3. 动态替换后端请求地址 (自动处理末尾可能存在的斜杠)
-          BACKEND_URL=$(echo "${{ github.event.inputs.memos_backend }}" | sed 's:/*$::')
-          sed -i "s|window.location.origin|'${BACKEND_URL}'|g" "$ROOT_DIR/web/src/connect.ts"
+          # 3. 将 Bun 复制到 web 目录下（完全符合你原本的构建脚本路径）
+          cp ~/.bun-bin/bun "$ROOT_DIR/web/"
           
           # 4. 使用本地 Bun 编译真实前端并提取到仓库根目录
           cd "$ROOT_DIR/web"
@@ -76,52 +81,22 @@ jobs:
           cp -r dist/* ../../
           cd ../..
           
-          # 5. 准备无头后端编译 (注入极简前端)
-          rm -rf "$ROOT_DIR/web/dist/"*
-          echo "<html><body>已关闭前端显示</body></html>" > "$ROOT_DIR/web/dist/index.html"
-          
-          # 6. 执行后端交叉编译
-          ARCH_SELECTION="${{ github.event.inputs.target_arch }}"
-          export GOOS=$(echo $ARCH_SELECTION | cut -d'_' -f1)
-          export GOARCH=$(echo $ARCH_SELECTION | cut -d'_' -f2)
-          [ "$GOARCH" == "arm" ] && export GOARM=7
-          export CGO_ENABLED=0
-          
-          OUTPUT_NAME="memos_headless"
-          [ "$GOOS" == "windows" ] && OUTPUT_NAME="memos_headless.exe"
-          
-          cd "$ROOT_DIR"
-          go build -ldflags="-s -w" -trimpath -o "../$OUTPUT_NAME" ./cmd/memos/main.go
-          cd ..
-          
-          # 7. 将后端文件移出仓库目录，防止被 Git 提交
-          mv "$OUTPUT_NAME" /tmp/memos_headless_bin
-          echo "FINAL_BIN_NAME=$OUTPUT_NAME" >> $GITHUB_ENV
-          
-          # 8. 彻底删除源码文件夹，确保它不会出现在 git add 中
+          # 5. 彻底删除源码文件夹
           rm -rf "$ROOT_DIR"
 
-      - name: 生成精准路由配置 (Vercel & Netlify)
+      - name: 生成前端单页路由配置 (SPA 兼容)
         run: |
-          DOMAIN=$(echo "${{ github.event.inputs.memos_backend }}" | sed 's:/*$::')
-          
-          # 移除 API 相关重写，仅保留上传文件的资源重反代和前端路由重定向
+          # 静态 CDN 托管必留：防止前端路由刷新时报 404
           cat <<EOF > vercel.json
           {
             "version": 2,
             "rewrites": [
-              { "source": "/file/(.*)", "destination": "$DOMAIN/file/\$1" },
               { "source": "/(.*)", "destination": "/index.html" }
             ]
           }
           EOF
 
           cat <<EOF > netlify.toml
-          [[redirects]]
-            from = "/file/*"
-            to = "$DOMAIN/file/:splat"
-            status = 200
-            force = true
           [[redirects]]
             from = "/*"
             to = "/index.html"
@@ -133,17 +108,11 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add .
+          
           # 检查是否有文件变更，避免空提交报错
           if git diff --staged --quiet; then
             echo "没有内容变更，跳过提交。"
           else
-            git commit -m "chore: 更新前端静态资源与路由规则 (Backend: ${{ github.event.inputs.memos_backend }})"
+            git commit -m "chore: 自动化构建纯前端静态资源 (CDN)"
             git push
           fi
-
-      - name: 上传无头版后端原始文件
-        uses: actions/upload-artifact@v4
-        with:
-          name: memos-headless-${{ github.event.inputs.target_arch }}
-          path: /tmp/memos_headless_bin
-          retention-days: 7
