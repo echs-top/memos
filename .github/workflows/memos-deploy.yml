@@ -25,10 +25,18 @@ jobs:
         with:
           version: 10
 
-      - name: 清理当前目录 (只保留 .github)
+      - name: 清理当前目录 (保留核心配置文件)
         run: |
-          # 彻底清空工作区旧文件，严格只保留 .github 和 .git 核心目录
-          find . -maxdepth 1 ! -name '.github' ! -name '.git' ! -name '.' -exec rm -rf {} +
+          # 彻底清空工作区旧文件，严格保留 .github 目录以及指定的配置文件
+          find . -maxdepth 1 \
+            ! -name '.github' \
+            ! -name '.git' \
+            ! -name 'vercel.json' \
+            ! -name 'netlify.toml' \
+            ! -name 'worker.js' \
+            ! -name 'wrangler.toml' \
+            ! -name '.' \
+            -exec rm -rf {} +
 
       - name: 下载并解压 Memos 源码
         run: |
@@ -59,76 +67,6 @@ jobs:
           
           # 5. 彻底删除源码文件夹与 node_modules，不留任何缓存痕迹
           rm -rf "$ROOT_DIR"
-
-      - name: 生成前端单页路由配置 (SPA 兼容)
-        run: |
-          cat <<EOF > vercel.json
-          {
-            "headers": [
-              {
-                "source": "/(.*)",
-                "headers": [
-                  { "key": "Access-Control-Allow-Origin", "value": "*" },
-                  { "key": "Access-Control-Allow-Methods", "value": "*" },
-                  { "key": "Access-Control-Allow-Headers", "value": "*" },
-                  { "key": "Content-Security-Policy", "value": "frame-ancestors *" }
-                ]
-              }
-            ]
-          }
-          EOF
-          
-          cat <<EOF > netlify.toml
-          [[headers]]
-            for = "/*"
-            [headers.values]
-              Access-Control-Allow-Origin = "*"
-              Access-Control-Allow-Methods = "*"
-              Access-Control-Allow-Headers = "*"
-              Content-Security-Policy = "frame-ancestors *"
-          EOF
-          
-          cat <<EOF > worker.js
-          export default {
-            async fetch(request, env, ctx) {
-              // 跨域
-              const corsHeaders = {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "*",
-                "Access-Control-Allow-Headers": "*",
-                Content-Security-Policy = "frame-ancestors *",
-              };
-              // OPTIONS预检请求
-              if (request.method === "OPTIONS") {
-                return new Response(null, { headers: corsHeaders });
-              }
-              try {
-                // From global binding assets
-                const response = await env.ASSETS.fetch(request);
-          
-                const newResponse = new Response(response.body, response);
-                Object.keys(corsHeaders).forEach(key => {
-                  newResponse.headers.set(key, corsHeaders[key]);
-                });
-                return newResponse;
-              } catch (e) {
-                return new Response("Internal Server Error", { status: 500 });
-              }
-            }
-          };
-          EOF
-          
-          cat <<EOF > wrangler.toml
-          # Worker名称
-          name = "memos"
-          # 入口文件路径
-          main = "worker.js"
-          # 日期
-          compatibility_date = "2026-05-20"
-          # 配置静态资源目录
-          [assets]
-          directory = "./"
-          EOF
 
       - name: 提交前端构建产物至仓库
         run: |
